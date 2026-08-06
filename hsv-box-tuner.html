@@ -1,0 +1,657 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HSV Threshold Box Tuner</title>
+<style>
+  :root {
+    --bg: #12141a;
+    --panel: #1a1d26;
+    --panel-2: #21252f;
+    --line: #2e3440;
+    --text: #dfe3ec;
+    --dim: #8b93a5;
+    --accent: #6db3f2;
+    --good: #4cc38a;
+    --bad: #e5484d;
+    --warn: #e8a33d;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%;
+    background: var(--bg); color: var(--text);
+    font: 13px/1.45 ui-sans-serif, -apple-system, "SF Pro Text", Segoe UI, sans-serif;
+    overflow: hidden;
+  }
+  #app { display: flex; height: 100%; }
+
+  /* ---------- sidebar ---------- */
+  #side {
+    width: 340px; flex: none; height: 100%; overflow-y: auto;
+    background: var(--panel); border-right: 1px solid var(--line);
+    padding: 14px 14px 40px;
+  }
+  h1 { font-size: 14px; margin: 0 0 2px; letter-spacing: .2px; }
+  .sub { color: var(--dim); font-size: 11.5px; margin: 0 0 16px; }
+  h2 {
+    font-size: 10.5px; text-transform: uppercase; letter-spacing: .09em;
+    color: var(--dim); margin: 20px 0 8px; font-weight: 600;
+  }
+  h2:first-of-type { margin-top: 6px; }
+
+  /* ---------- channel controls ---------- */
+  .chan { background: var(--panel-2); border: 1px solid var(--line); border-radius: 7px; padding: 9px 10px; margin-bottom: 8px; }
+  .chan-head { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
+  .chan-name { font-weight: 700; font-size: 13px; width: 14px; color: var(--accent); }
+  .chan-unit { color: var(--dim); font-size: 10.5px; flex: 1; }
+  .chan-head input[type=number] {
+    width: 62px; background: #12141a; color: var(--text);
+    border: 1px solid var(--line); border-radius: 4px;
+    padding: 3px 5px; font: inherit; font-variant-numeric: tabular-nums; text-align: right;
+  }
+  .chan-head input[type=number]:focus { outline: none; border-color: var(--accent); }
+  .dash { color: var(--dim); }
+  .srow { display: flex; align-items: center; gap: 7px; margin-top: 4px; }
+  .srow span { color: var(--dim); font-size: 10px; width: 24px; }
+  input[type=range] { flex: 1; accent-color: var(--accent); height: 16px; }
+
+  /* ---------- stats ---------- */
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; color: var(--dim); font-weight: 600; font-size: 10px;
+       text-transform: uppercase; letter-spacing: .06em; padding: 0 0 5px; }
+  th.n, td.n { text-align: right; }
+  td { padding: 4px 0; border-top: 1px solid var(--line); vertical-align: middle; }
+  tr.sub-row td { border-top: none; padding-top: 0; }
+  .swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; vertical-align: 1px; }
+  .cname { font-size: 11.5px; }
+  .sub-row .cname { padding-left: 14px; color: var(--dim); font-size: 10.5px; font-style: italic; }
+  .cnt { font-variant-numeric: tabular-nums; font-size: 11.5px; }
+  .pct { font-variant-numeric: tabular-nums; font-size: 11px; width: 42px; }
+  .bar { height: 3px; border-radius: 2px; background: var(--line); margin-top: 3px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; }
+  .ok { color: var(--good); } .no { color: var(--bad); } .mid { color: var(--warn); }
+  label.vis { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  label.vis input { accent-color: var(--accent); margin: 0; }
+
+  /* ---------- buttons / export ---------- */
+  .btns { display: flex; flex-wrap: wrap; gap: 5px; }
+  button {
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--line); border-radius: 5px;
+    padding: 5px 9px; font: inherit; font-size: 11px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); color: #fff; }
+  button.primary { border-color: #3a4a5e; }
+  pre#export {
+    background: #0d0f14; border: 1px solid var(--line); border-radius: 6px;
+    padding: 9px 10px; margin: 0 0 6px; font-size: 11px; line-height: 1.55;
+    color: #b9c4d6; overflow-x: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  /* ---------- viewport ---------- */
+  #view { position: relative; flex: 1; min-width: 0; }
+  canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+  canvas.drag { cursor: grabbing; }
+  #hint {
+    position: absolute; left: 14px; bottom: 12px; color: var(--dim);
+    font-size: 11px; pointer-events: none; text-shadow: 0 1px 3px #000;
+  }
+  #tip {
+    position: absolute; pointer-events: none; display: none;
+    background: rgba(10,12,17,.95); border: 1px solid var(--line);
+    border-radius: 5px; padding: 6px 8px; font-size: 11px; line-height: 1.5;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space: nowrap; transform: translate(10px, -50%); z-index: 5;
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <aside id="side">
+    <h1>HSV Threshold Box Tuner</h1>
+    <p class="sub">Solid dots pass the box. Faded dots are rejected. Red rings = an <em>exclude</em> cluster leaking in.</p>
+
+    <h2>Threshold box</h2>
+    <div id="channels"></div>
+    <div class="btns" style="margin-top:8px">
+      <button id="btn-reset">Reset to current box</button>
+      <button id="btn-suggest" class="primary">Load H[200,216] S[.25,.79] V[.58,1]</button>
+    </div>
+
+    <h2>Cluster capture</h2>
+    <table id="stats"><thead>
+      <tr><th style="width:auto">Cluster</th><th class="n" style="width:64px">Inside</th><th class="n" style="width:46px">%</th></tr>
+    </thead><tbody></tbody></table>
+
+    <h2>Visible in 3D</h2>
+    <div id="vis" style="display:flex;flex-direction:column;gap:5px"></div>
+
+    <h2>Camera</h2>
+    <div class="btns">
+      <button data-cam="iso">3/4 view</button>
+      <button data-cam="hv">H–V (down S)</button>
+      <button data-cam="hs">H–S (down V)</button>
+      <button data-cam="sv">S–V (down H)</button>
+    </div>
+
+    <h2>Export</h2>
+    <pre id="export"></pre>
+    <div class="btns"><button id="btn-copy">Copy constants</button></div>
+  </aside>
+
+  <div id="view">
+    <canvas id="cv"></canvas>
+    <div id="tip"></div>
+    <div id="hint">drag to orbit &middot; scroll to zoom &middot; hover a dot for its HSV</div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* =====================================================================
+   1. Data — real pixel samples, [H (0-360), S (0-1), V (0-1)]
+   ===================================================================== */
+
+const cobalt_blue_target = [[205.7,0.488,0.843],[207.9,0.345,0.808],[208.5,0.409,0.929],[207.4,0.405,0.91],[213.5,0.561,0.839],[210.0,0.42,0.953],[213.4,0.353,0.678],[211.9,0.514,0.863],[212.5,0.602,0.769],[204.9,0.488,0.851]];
+
+const mRNA_exclude = [[298.4,0.188,0.792],[286.5,0.241,0.796],[307.1,0.201,0.82],[291.6,0.21,0.804],[296.8,0.183,0.816],[289.2,0.191,0.8],[277.0,0.222,0.831],[293.0,0.208,0.812],[280.0,0.207,0.796],[300.0,0.205,0.824],[285.8,0.185,0.804],[280.0,0.223,0.792],[300.0,0.172,0.843],[278.4,0.233,0.843],[285.0,0.204,0.769],[280.0,0.197,0.835],[304.2,0.202,0.835],[282.5,0.24,0.784],[281.7,0.216,0.835],[296.8,0.18,0.808],[305.0,0.175,0.808],[285.8,0.192,0.776],[291.4,0.271,0.71],[283.3,0.212,0.796],[286.0,0.219,0.843],[285.0,0.199,0.788],[292.2,0.227,0.796],[300.0,0.171,0.827],[300.0,0.188,0.816],[298.4,0.182,0.82],[287.2,0.219,0.843],[290.0,0.211,0.78],[298.7,0.216,0.816],[295.5,0.196,0.8],[295.1,0.177,0.82],[283.5,0.235,0.851],[285.0,0.212,0.816],[290.0,0.21,0.784],[289.5,0.194,0.808],[280.0,0.196,0.839]];
+
+const tRNA_exclude = [[309.4,0.365,0.753],[307.9,0.327,0.816],[314.0,0.395,0.725],[306.9,0.376,0.729],[308.1,0.306,0.757],[303.1,0.304,0.749],[310.2,0.335,0.761],[314.0,0.39,0.733],[311.3,0.358,0.757],[310.2,0.339,0.753],[308.2,0.333,0.776],[308.9,0.33,0.725],[310.0,0.359,0.722],[317.3,0.363,0.788],[310.2,0.337,0.757],[303.0,0.326,0.733],[309.7,0.358,0.745],[312.5,0.333,0.788],[302.0,0.328,0.706],[309.2,0.377,0.749],[309.0,0.372,0.769],[312.5,0.365,0.773],[315.0,0.404,0.737],[308.8,0.352,0.757],[314.2,0.358,0.788],[310.2,0.337,0.757],[313.0,0.365,0.796],[307.3,0.322,0.804],[312.5,0.347,0.757],[308.8,0.352,0.757]];
+
+const purple_exclude = [[257.0,0.386,0.824],[256.6,0.407,0.8],[256.8,0.398,0.808],[254.8,0.388,0.82],[256.4,0.374,0.808],[258.2,0.374,0.796],[255.9,0.378,0.82],[256.5,0.377,0.831],[262.0,0.393,0.788],[253.9,0.392,0.82],[255.7,0.4,0.824],[254.1,0.386,0.824],[254.2,0.355,0.796],[254.5,0.392,0.831],[257.2,0.392,0.8],[260.8,0.387,0.761],[257.9,0.379,0.796],[253.2,0.368,0.82],[257.1,0.377,0.8],[259.0,0.397,0.78]];
+
+const background_exclude = [[40.2,0.392,0.851],[38.5,0.455,0.792],[38.0,0.291,0.808],[36.6,0.557,0.902],[211.5,0.629,0.486],[214.2,0.675,0.459],[38.2,0.556,0.875],[37.0,0.547,0.918],[37.6,0.56,0.882],[211.8,0.669,0.486],[36.1,0.547,0.918],[39.0,0.553,0.894],[39.9,0.573,0.918],[214.2,0.675,0.459],[36.1,0.549,0.914],[216.0,0.708,0.443],[36.7,0.549,0.922],[219.7,0.631,0.478],[36.0,0.551,0.89],[38.5,0.361,0.847],[40.6,0.573,0.91],[211.5,0.656,0.478],[37.4,0.556,0.918],[39.0,0.599,0.635],[217.3,0.537,0.482],[38.2,0.733,0.529],[214.6,0.709,0.431],[213.4,0.669,0.463],[42.7,0.565,0.722],[37.4,0.506,0.906],[42.6,0.551,0.882],[38.2,0.733,0.529],[37.4,0.5,0.918],[216.5,0.655,0.443],[37.6,0.555,0.89],[213.8,0.678,0.451],[215.1,0.67,0.451],[38.5,0.455,0.792],[37.6,0.56,0.882],[40.2,0.552,0.902]];
+
+const product_0403_true_fill = [[202.3,0.719,0.867],[204.8,0.766,0.82],[207.3,0.677,0.851],[209.0,0.687,0.851],[124.5,0.217,0.722],[224.4,0.627,0.6],[156.7,0.293,0.482],[314.8,0.489,0.745],[246.2,0.534,0.573],[300.0,0.351,0.761],[209.3,0.606,0.847],[205.4,0.696,0.812],[207.6,0.682,0.851],[209.2,0.645,0.863],[220.0,0.663,0.675],[105.9,0.374,0.714],[209.4,0.686,0.863],[234.1,0.559,0.569],[204.3,0.771,0.804],[205.1,0.685,0.847],[302.9,0.335,0.725],[206.4,0.695,0.835],[206.8,0.701,0.827],[219.6,0.687,0.588],[208.0,0.721,0.886],[221.2,0.651,0.675],[205.8,0.651,0.855],[248.1,0.574,0.553],[205.5,0.624,0.667],[265.3,0.405,0.62],[205.4,0.709,0.835],[205.1,0.641,0.906],[306.2,0.395,0.765],[209.8,0.665,0.902],[206.0,0.682,0.863],[110.6,0.327,0.769],[132.9,0.3,0.549],[204.8,0.668,0.851],[206.4,0.632,0.875],[110.6,0.379,0.663],[205.8,0.634,0.878],[201.6,0.682,0.863],[206.8,0.621,0.89],[210.2,0.674,0.867],[205.8,0.7,0.796],[209.7,0.649,0.682],[279.7,0.345,0.773],[309.7,0.414,0.824],[211.7,0.654,0.851],[216.9,0.646,0.741],[204.8,0.63,0.859],[203.4,0.71,0.824],[256.7,0.477,0.502],[112.1,0.316,0.757],[204.0,0.636,0.863],[207.3,0.733,0.765],[207.2,0.621,0.878],[300.0,0.349,0.741],[207.7,0.662,0.835],[225.6,0.671,0.584],[260.8,0.449,0.655],[307.8,0.383,0.788],[205.1,0.679,0.855],[207.1,0.636,0.82],[292.4,0.384,0.725],[202.1,0.647,0.855],[206.5,0.674,0.843],[264.3,0.522,0.631],[115.2,0.342,0.722],[208.1,0.745,0.831],[210.3,0.757,0.451],[303.9,0.31,0.773],[204.1,0.659,0.875],[204.5,0.64,0.871],[202.3,0.716,0.855],[206.0,0.689,0.894],[223.3,0.628,0.718],[204.8,0.668,0.851],[268.2,0.436,0.459],[203.8,0.652,0.867]];
+
+// The hue window that isolates 0403's true fill from the bleed picked up by the sloppy trace.
+const CORE_H = [198, 215];
+
+const CLUSTERS = [
+  { key: 'cobalt',  label: 'cobalt_blue_target',     role: 'include', tint: '#6db3f2', data: cobalt_blue_target },
+  { key: 'p0403',   label: 'product_0403 (all)',     role: 'mixed',   tint: '#9d8cf5', data: product_0403_true_fill,
+    sub: { label: 'core fill, H ' + CORE_H[0] + '–' + CORE_H[1], test: p => p[0] >= CORE_H[0] && p[0] <= CORE_H[1] } },
+  { key: 'mrna',    label: 'mRNA_exclude',           role: 'exclude', tint: '#c77dd8', data: mRNA_exclude },
+  { key: 'trna',    label: 'tRNA_exclude',           role: 'exclude', tint: '#e07ab0', data: tRNA_exclude },
+  { key: 'purple',  label: 'purple_exclude',         role: 'exclude', tint: '#8a7de0', data: purple_exclude },
+  { key: 'bg',      label: 'background_exclude',     role: 'exclude', tint: '#d8a35c', data: background_exclude },
+];
+
+/* =====================================================================
+   2. State
+   ===================================================================== */
+
+const DEFAULT_BOX = { hMin: 198, hMax: 230, sMin: 0.25, sMax: 0.67, vMin: 0.55, vMax: 1.00 };
+const SUGGESTED   = { hMin: 200, hMax: 216, sMin: 0.25, sMax: 0.79, vMin: 0.58, vMax: 1.00 };
+
+const box = Object.assign({}, DEFAULT_BOX);
+const visible = {};
+CLUSTERS.forEach(c => visible[c.key] = true);
+
+const cam = { az: -0.62, el: 0.38, dist: 2.3 };
+
+// Flat list of every point, pre-decorated for rendering.
+const POINTS = [];
+for (const c of CLUSTERS) {
+  for (const p of c.data) {
+    POINTS.push({
+      h: p[0], s: p[1], v: p[2],
+      cluster: c,
+      // unit cube centred on origin: H→x, V→y (up), S→z
+      wx: p[0] / 360 - 0.5,
+      wy: p[2] - 0.5,
+      wz: p[1] - 0.5,
+      css: hsvCss(p[0], p[1], p[2]),
+    });
+  }
+}
+
+const inBox = p => p.h >= box.hMin && p.h <= box.hMax
+              && p.s >= box.sMin && p.s <= box.sMax
+              && p.v >= box.vMin && p.v <= box.vMax;
+
+function hsvCss(h, s, v) {
+  h = ((h % 360) + 360) % 360;
+  const c = v * s, x = c * (1 - Math.abs((h / 60) % 2 - 1)), m = v - c;
+  let r, g, b;
+  if      (h <  60) [r,g,b] = [c,x,0];
+  else if (h < 120) [r,g,b] = [x,c,0];
+  else if (h < 180) [r,g,b] = [0,c,x];
+  else if (h < 240) [r,g,b] = [0,x,c];
+  else if (h < 300) [r,g,b] = [x,0,c];
+  else              [r,g,b] = [c,0,x];
+  const f = n => Math.round((n + m) * 255);
+  return `rgb(${f(r)},${f(g)},${f(b)})`;
+}
+
+/* =====================================================================
+   3. Camera + projection
+   ===================================================================== */
+
+const canvas = document.getElementById('cv');
+const ctx = canvas.getContext('2d');
+let W = 0, H = 0, focal = 0;
+
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  const r = canvas.parentElement.getBoundingClientRect();
+  W = r.width; H = r.height;
+  canvas.width  = Math.round(W * dpr);
+  canvas.height = Math.round(H * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  focal = Math.min(W, H) * 0.95;
+  draw();
+}
+
+let camPos, bx, by, bz;   // camera position and view basis (right, up, forward)
+
+function updateCamera() {
+  const ce = Math.cos(cam.el), se = Math.sin(cam.el);
+  camPos = [cam.dist * ce * Math.sin(cam.az), cam.dist * se, cam.dist * ce * Math.cos(cam.az)];
+  // forward points from the camera toward the origin
+  const L = Math.hypot(...camPos);
+  bz = [-camPos[0]/L, -camPos[1]/L, -camPos[2]/L];
+  // right = normalize(cross(forward, worldUp)); worldUp is [0,1,0] so this reduces to [-fz, 0, fx]
+  const rl = Math.hypot(bz[2], bz[0]) || 1;
+  bx = [-bz[2]/rl, 0, bz[0]/rl];
+  // up = cross(right, forward)
+  by = [bx[1]*bz[2] - bx[2]*bz[1], bx[2]*bz[0] - bx[0]*bz[2], bx[0]*bz[1] - bx[1]*bz[0]];
+}
+
+/** World point -> {x, y, d} screen coords + depth. Returns null if behind the camera. */
+function project(x, y, z) {
+  const dx = x - camPos[0], dy = y - camPos[1], dz = z - camPos[2];
+  const d = dx*bz[0] + dy*bz[1] + dz*bz[2];
+  if (d <= 0.05) return null;
+  const vx = dx*bx[0] + dy*bx[1] + dz*bx[2];
+  const vy = dx*by[0] + dy*by[1] + dz*by[2];
+  const k = focal / d;
+  return { x: W/2 + vx * k, y: H/2 - vy * k, d };
+}
+
+/* =====================================================================
+   4. Box geometry
+   ===================================================================== */
+
+// Corner index bits: bit2 = x (H), bit1 = y (V), bit0 = z (S)
+function boxCorners() {
+  const x0 = box.hMin/360 - 0.5, x1 = box.hMax/360 - 0.5;
+  const y0 = box.vMin - 0.5,     y1 = box.vMax - 0.5;
+  const z0 = box.sMin - 0.5,     z1 = box.sMax - 0.5;
+  const out = [];
+  for (let i = 0; i < 8; i++) {
+    out.push([ (i & 4) ? x1 : x0, (i & 2) ? y1 : y0, (i & 1) ? z1 : z0 ]);
+  }
+  return out;
+}
+
+const EDGES = [];
+for (let i = 0; i < 8; i++) {
+  for (const bit of [4, 2, 1]) if (!(i & bit)) EDGES.push([i, i | bit]);
+}
+
+// [corner indices in cyclic order, outward normal]
+const FACES = [
+  [[0,1,3,2], [-1,0,0]], [[4,6,7,5], [1,0,0]],
+  [[0,4,5,1], [0,-1,0]], [[2,3,7,6], [0,1,0]],
+  [[0,2,6,4], [0,0,-1]], [[1,5,7,3], [0,0,1]],
+];
+
+/* =====================================================================
+   5. Render
+   ===================================================================== */
+
+let raf = 0;
+const draw = () => { if (!raf) raf = requestAnimationFrame(render); };
+
+function render() {
+  raf = 0;
+  updateCamera();
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#12141a';
+  ctx.fillRect(0, 0, W, H);
+
+  drawFloor();
+  drawAxes();
+
+  const corners = boxCorners();
+  const proj = corners.map(c => project(c[0], c[1], c[2]));
+
+  // Split the box into the half behind the cloud and the half in front of it.
+  const backFaces = [], frontFaces = [];
+  for (const [idx, n] of FACES) {
+    const cx = idx.reduce((a,i) => a + corners[i][0], 0) / 4;
+    const cy = idx.reduce((a,i) => a + corners[i][1], 0) / 4;
+    const cz = idx.reduce((a,i) => a + corners[i][2], 0) / 4;
+    const facingAway = (cx-camPos[0])*n[0] + (cy-camPos[1])*n[1] + (cz-camPos[2])*n[2] > 0;
+    (facingAway ? backFaces : frontFaces).push(idx);
+  }
+  // On a convex box the three hidden edges all meet at the farthest corner.
+  let far = 0;
+  for (let i = 1; i < 8; i++) if (proj[i] && (!proj[far] || proj[i].d > proj[far].d)) far = i;
+
+  fillFaces(backFaces, proj, 0.05);
+  strokeEdges(proj, far, true);
+
+  drawPoints();
+
+  fillFaces(frontFaces, proj, 0.045);
+  strokeEdges(proj, far, false);
+}
+
+function fillFaces(faces, proj, alpha) {
+  ctx.fillStyle = `rgba(109,179,242,${alpha})`;
+  for (const idx of faces) {
+    if (idx.some(i => !proj[i])) continue;
+    ctx.beginPath();
+    idx.forEach((i, k) => k ? ctx.lineTo(proj[i].x, proj[i].y) : ctx.moveTo(proj[i].x, proj[i].y));
+    ctx.closePath();
+    ctx.fill();
+  }
+}
+
+function strokeEdges(proj, far, hidden) {
+  ctx.lineWidth = hidden ? 1 : 1.6;
+  ctx.strokeStyle = hidden ? 'rgba(109,179,242,.28)' : 'rgba(140,199,255,.95)';
+  ctx.setLineDash(hidden ? [3, 3] : []);
+  ctx.beginPath();
+  for (const [a, b] of EDGES) {
+    if ((a === far || b === far) !== hidden) continue;
+    if (!proj[a] || !proj[b]) continue;
+    ctx.moveTo(proj[a].x, proj[a].y);
+    ctx.lineTo(proj[b].x, proj[b].y);
+  }
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+let screenCache = [];   // for hover hit-testing
+
+function drawPoints() {
+  const list = [];
+  for (const p of POINTS) {
+    if (!visible[p.cluster.key]) continue;
+    const q = project(p.wx, p.wy, p.wz);
+    if (!q) continue;
+    list.push({ p, q, pass: inBox(p) });
+  }
+  list.sort((a, b) => b.q.d - a.q.d);   // painter's algorithm: farthest first
+  screenCache = list;
+
+  for (const { p, q, pass } of list) {
+    const r = Math.max(1.4, Math.min(11, 3.4 * cam.dist / q.d));
+    ctx.beginPath();
+    ctx.arc(q.x, q.y, pass ? r : r * 0.55, 0, 6.2832);
+    if (pass) {
+      ctx.fillStyle = p.css;
+      ctx.fill();
+      ctx.lineWidth = 0.9;
+      ctx.strokeStyle = 'rgba(255,255,255,.35)';
+      ctx.stroke();
+      if (p.cluster.role === 'exclude') {      // leakage: this should not be inside
+        ctx.beginPath();
+        ctx.arc(q.x, q.y, r + 2.6, 0, 6.2832);
+        ctx.lineWidth = 1.6;
+        ctx.strokeStyle = 'rgba(229,72,77,.95)';
+        ctx.stroke();
+      }
+    } else {
+      ctx.globalAlpha = 0.3;
+      ctx.fillStyle = p.css;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+  }
+}
+
+function drawFloor() {
+  ctx.strokeStyle = 'rgba(255,255,255,.045)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let i = 0; i <= 10; i++) {
+    const t = i / 10 - 0.5;
+    seg(t, -0.5, -0.5, t, -0.5, 0.5);
+    seg(-0.5, -0.5, t, 0.5, -0.5, t);
+  }
+  ctx.stroke();
+}
+
+function seg(x0, y0, z0, x1, y1, z1) {
+  const a = project(x0, y0, z0), b = project(x1, y1, z1);
+  if (a && b) { ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); }
+}
+
+const AXES = [
+  { label: 'H  0–360°', dir: [1,0,0], ticks: [0,90,180,270,360], fmt: t => t + '°' },
+  { label: 'V  0–1',    dir: [0,1,0], ticks: [0,.25,.5,.75,1],   fmt: t => t.toFixed(2) },
+  { label: 'S  0–1',    dir: [0,0,1], ticks: [0,.25,.5,.75,1],   fmt: t => t.toFixed(2) },
+];
+
+function drawAxes() {
+  const o = [-0.5, -0.5, -0.5];
+  ctx.strokeStyle = 'rgba(255,255,255,.22)';
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  for (const a of AXES) seg(o[0], o[1], o[2], o[0]+a.dir[0], o[1]+a.dir[1], o[2]+a.dir[2]);
+  ctx.stroke();
+
+  ctx.font = '10px ui-sans-serif, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (const a of AXES) {
+    const span = a.ticks[a.ticks.length - 1] - a.ticks[0];
+    for (const t of a.ticks.slice(1)) {   // skip the shared origin tick — all three would collide
+      const f = (t - a.ticks[0]) / span;
+      const q = project(o[0] + a.dir[0]*f, o[1] + a.dir[1]*f, o[2] + a.dir[2]*f);
+      if (!q) continue;
+      ctx.fillStyle = 'rgba(139,147,165,.75)';
+      ctx.fillText(a.fmt(t), q.x + (a.dir[1] ? -18 : 0), q.y + (a.dir[1] ? 0 : 11));
+    }
+    const e = project(o[0] + a.dir[0]*1.14, o[1] + a.dir[1]*1.14, o[2] + a.dir[2]*1.14);
+    if (e) { ctx.fillStyle = '#6db3f2'; ctx.font = 'bold 11px ui-sans-serif, sans-serif';
+             ctx.fillText(a.label, e.x, e.y); ctx.font = '10px ui-sans-serif, sans-serif'; }
+  }
+}
+
+/* =====================================================================
+   6. Interaction
+   ===================================================================== */
+
+let dragging = false, lastX = 0, lastY = 0;
+
+canvas.addEventListener('pointerdown', e => {
+  dragging = true; lastX = e.clientX; lastY = e.clientY;
+  canvas.classList.add('drag'); canvas.setPointerCapture(e.pointerId);
+  tip.style.display = 'none';
+});
+canvas.addEventListener('pointerup', e => {
+  dragging = false; canvas.classList.remove('drag');
+  canvas.releasePointerCapture(e.pointerId);
+});
+canvas.addEventListener('pointermove', e => {
+  if (dragging) {
+    cam.az -= (e.clientX - lastX) * 0.008;
+    cam.el = Math.max(-1.5, Math.min(1.5, cam.el + (e.clientY - lastY) * 0.008));
+    lastX = e.clientX; lastY = e.clientY;
+    draw();
+  } else {
+    hover(e);
+  }
+});
+canvas.addEventListener('pointerleave', () => { tip.style.display = 'none'; });
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  cam.dist = Math.max(1.2, Math.min(8, cam.dist * Math.exp(e.deltaY * 0.0012)));
+  draw();
+}, { passive: false });
+
+const tip = document.getElementById('tip');
+function hover(e) {
+  const r = canvas.getBoundingClientRect();
+  const mx = e.clientX - r.left, my = e.clientY - r.top;
+  let best = null, bestD = 100;
+  for (const s of screenCache) {                       // nearest first: iterate front-to-back
+    const d = (s.q.x - mx) ** 2 + (s.q.y - my) ** 2;
+    if (d < bestD) { bestD = d; best = s; }
+  }
+  if (!best) { tip.style.display = 'none'; return; }
+  const { p, pass } = best;
+  const verdict = pass
+    ? (p.cluster.role === 'exclude' ? '<span style="color:#e5484d">INSIDE — leaking</span>' : '<span style="color:#4cc38a">INSIDE</span>')
+    : '<span style="color:#8b93a5">outside</span>';
+  tip.innerHTML = `<b>${p.cluster.label}</b><br>H ${p.h.toFixed(1)}  S ${p.s.toFixed(3)}  V ${p.v.toFixed(3)}<br>${verdict}`;
+  tip.style.display = 'block';
+  tip.style.left = best.q.x + 'px';
+  tip.style.top  = best.q.y + 'px';
+}
+
+/* =====================================================================
+   7. Controls
+   ===================================================================== */
+
+const CHANNELS = [
+  { name: 'H', unit: 'hue, degrees', min: 0, max: 360, step: 0.1, dec: 1, lo: 'hMin', hi: 'hMax' },
+  { name: 'S', unit: 'saturation, 0–1', min: 0, max: 1, step: 0.005, dec: 3, lo: 'sMin', hi: 'sMax' },
+  { name: 'V', unit: 'value, 0–1', min: 0, max: 1, step: 0.005, dec: 3, lo: 'vMin', hi: 'vMax' },
+];
+
+const inputs = {};
+const channelsEl = document.getElementById('channels');
+
+for (const ch of CHANNELS) {
+  const el = document.createElement('div');
+  el.className = 'chan';
+  el.innerHTML = `
+    <div class="chan-head">
+      <span class="chan-name">${ch.name}</span>
+      <span class="chan-unit">${ch.unit}</span>
+      <input type="number" data-k="${ch.lo}" min="${ch.min}" max="${ch.max}" step="${ch.step}">
+      <span class="dash">–</span>
+      <input type="number" data-k="${ch.hi}" min="${ch.min}" max="${ch.max}" step="${ch.step}">
+    </div>
+    <div class="srow"><span>min</span><input type="range" data-k="${ch.lo}" min="${ch.min}" max="${ch.max}" step="${ch.step}"></div>
+    <div class="srow"><span>max</span><input type="range" data-k="${ch.hi}" min="${ch.min}" max="${ch.max}" step="${ch.step}"></div>`;
+  channelsEl.appendChild(el);
+  for (const k of [ch.lo, ch.hi]) {
+    inputs[k] = { ch, els: [...el.querySelectorAll(`[data-k="${k}"]`)] };
+    inputs[k].els.forEach(i => i.addEventListener('input', () => setBound(k, parseFloat(i.value))));
+  }
+}
+
+function setBound(k, val) {
+  if (!isFinite(val)) return;
+  const ch = inputs[k].ch;
+  val = Math.max(ch.min, Math.min(ch.max, val));
+  box[k] = val;
+  // keep min <= max by pushing the partner bound
+  if (k === ch.lo && box[ch.lo] > box[ch.hi]) box[ch.hi] = val;
+  if (k === ch.hi && box[ch.hi] < box[ch.lo]) box[ch.lo] = val;
+  syncInputs();
+  refresh();
+}
+
+function syncInputs() {
+  for (const k in inputs) {
+    const { ch, els } = inputs[k];
+    for (const el of els) {
+      const s = box[k].toFixed(ch.dec);
+      if (el !== document.activeElement || el.type === 'range') el.value = s;
+    }
+  }
+}
+
+function setBox(src) { Object.assign(box, src); syncInputs(); refresh(); }
+document.getElementById('btn-reset').onclick   = () => setBox(DEFAULT_BOX);
+document.getElementById('btn-suggest').onclick = () => setBox(SUGGESTED);
+
+const CAM_PRESETS = {
+  iso: { az: -0.62, el: 0.38, dist: 2.3 }, hv: { az: 0, el: 0, dist: 2.1 },
+  hs: { az: 0, el: 1.5, dist: 2.1 },       sv: { az: -Math.PI / 2, el: 0, dist: 2.1 },
+};
+document.querySelectorAll('[data-cam]').forEach(b => b.onclick = () => {
+  Object.assign(cam, CAM_PRESETS[b.dataset.cam]); draw();
+});
+
+const visEl = document.getElementById('vis');
+for (const c of CLUSTERS) {
+  const l = document.createElement('label');
+  l.className = 'vis';
+  l.innerHTML = `<input type="checkbox" checked><span class="swatch" style="background:${c.tint}"></span><span class="cname">${c.label}</span>`;
+  l.querySelector('input').addEventListener('change', e => { visible[c.key] = e.target.checked; draw(); });
+  visEl.appendChild(l);
+}
+
+/* =====================================================================
+   8. Stats + export
+   ===================================================================== */
+
+const tbody = document.querySelector('#stats tbody');
+
+function statRow(label, pts, role, tint, isSub) {
+  const n = pts.length;
+  const hit = pts.reduce((a, p) => a + (inBox({ h: p[0], s: p[1], v: p[2] }) ? 1 : 0), 0);
+  const pct = n ? hit / n : 0;
+  // 'include' wants everything in; 'exclude' wants nothing in; 'mixed' is informational.
+  let cls = 'mid', barCol = 'var(--warn)';
+  if (role === 'include')      { if (pct === 1) { cls = 'ok'; barCol = 'var(--good)'; } }
+  else if (role === 'exclude') { if (hit === 0) { cls = 'ok'; barCol = 'var(--good)'; } else { cls = 'no'; barCol = 'var(--bad)'; } }
+  else                         { if (pct >= 0.95) { cls = 'ok'; barCol = 'var(--good)'; } }
+
+  const tr = document.createElement('tr');
+  if (isSub) tr.className = 'sub-row';
+  tr.innerHTML = `
+    <td><span class="cname">${isSub ? '' : `<span class="swatch" style="background:${tint}"></span>`}${label}</span>
+        <div class="bar"><i style="width:${(pct*100).toFixed(1)}%;background:${barCol}"></i></div></td>
+    <td class="n cnt ${cls}">${hit}<span style="color:var(--dim)">/${n}</span></td>
+    <td class="n pct ${cls}">${(pct*100).toFixed(0)}%</td>`;
+  tbody.appendChild(tr);
+}
+
+function refresh() {
+  tbody.innerHTML = '';
+  for (const c of CLUSTERS) {
+    statRow(c.label, c.data, c.role, c.tint, false);
+    if (c.sub) statRow(c.sub.label, c.data.filter(c.sub.test), 'include', c.tint, true);
+  }
+  document.getElementById('export').textContent =
+    `H_MIN, H_MAX = ${box.hMin.toFixed(1)}, ${box.hMax.toFixed(1)}\n` +
+    `S_MIN, S_MAX = ${box.sMin.toFixed(3)}, ${box.sMax.toFixed(3)}\n` +
+    `V_MIN, V_MAX = ${box.vMin.toFixed(3)}, ${box.vMax.toFixed(3)}`;
+  draw();
+}
+
+document.getElementById('btn-copy').onclick = async e => {
+  const text = document.getElementById('export').textContent;
+  let ok = false;
+  // navigator.clipboard needs a secure context, which file:// is not — fall back to execCommand.
+  try {
+    await navigator.clipboard.writeText(text);
+    ok = true;
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;opacity:0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { ok = document.execCommand('copy'); } catch {}
+    ta.remove();
+  }
+  e.target.textContent = ok ? 'Copied' : 'Press ⌘C to copy';
+  if (!ok) {                                    // leave the text selected so ⌘C works
+    const rng = document.createRange();
+    rng.selectNodeContents(document.getElementById('export'));
+    const sel = getSelection(); sel.removeAllRanges(); sel.addRange(rng);
+  }
+  setTimeout(() => e.target.textContent = 'Copy constants', 1600);
+};
+
+/* ---------- boot ---------- */
+window.addEventListener('resize', resize);
+syncInputs();
+refresh();
+resize();
+</script>
+</body>
+</html>
