@@ -109,6 +109,9 @@
   .ip-head b { font-size: 11px; font-weight: 600; flex: 1;
                font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   .ip-head button { padding: 1px 7px; font-size: 12px; line-height: 1.3; }
+  .ip-head .ip-load { padding: 2px 8px; font-size: 10.5px; }
+  #imgpanel.drop { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(109,179,242,.25); }
+  #imgpanel.drop #ipwrap { outline: 2px dashed var(--accent); outline-offset: -4px; }
   #ipwrap {
     /* checkerboard shows through the transparent surround */
     background-color: #0d0f14;
@@ -179,9 +182,11 @@
 
     <div id="imgpanel">
       <div class="ip-head">
-        <b>3A-403-01.png</b>
+        <b id="ip-name">3A-403-01.png</b>
+        <button class="ip-load" id="ip-load" title="Load a different blob PNG">Load&hellip;</button>
         <button id="ip-collapse" title="collapse">&minus;</button>
       </div>
+      <input type="file" id="ip-file" accept="image/png,image/*" hidden>
       <div id="ipwrap"><canvas id="ipcv"></canvas></div>
       <div class="ip-modes">
         <button data-mode="highlight" class="on">Highlight</button>
@@ -702,7 +707,10 @@ document.getElementById('btn-copy').onclick = async e => {
 
    BLOB_PNG below is fabian-files/3A-403-01.png cropped to its alpha
    bounding box (1528,414)-(1595,500) plus 1px, losslessly re-encoded.
-   It is a snapshot — if the source art changes, regenerate it with:
+   This is only the DEFAULT shown on load. To inspect any other blob, use the
+   panel's "Load…" button or drag a PNG onto the panel — no rebuild needed, and
+   the image is cropped to its alpha bounding box automatically. Regenerating
+   the constant below is only worth doing to change which blob opens by default:
 
      python3 -c "
      from PIL import Image; import io, base64, pathlib, re
@@ -730,45 +738,126 @@ let ipReady = false;
 let ipW = 0, ipH = 0;
 let pxH, pxS, pxV, pxA, pxR, pxG, pxB, ipOut, ipOpaque = 0;
 
-const blobImg = new Image();
-blobImg.onload = () => {
-  ipW = blobImg.naturalWidth; ipH = blobImg.naturalHeight;
-  ipcv.width = ipW; ipcv.height = ipH;
+const ipName = document.getElementById('ip-name');
+
+/** Decode an image into per-pixel HSV buffers, cropped to its alpha bounding box.
+ *  The source exports are 5612x3748 with only a small painted region, so cropping
+ *  first keeps the per-pixel arrays to a few thousand entries rather than 21M. */
+function ingestImage(img, label) {
+  const w = img.naturalWidth, h = img.naturalHeight;
+  if (!w || !h) { ipStat.textContent = 'image has no pixels'; return; }
 
   const off = document.createElement('canvas');
-  off.width = ipW; off.height = ipH;
+  off.width = w; off.height = h;
   const octx = off.getContext('2d', { willReadFrequently: true });
-  octx.drawImage(blobImg, 0, 0);
-  const src = octx.getImageData(0, 0, ipW, ipH).data;
+  octx.drawImage(img, 0, 0);
+  let full;
+  try {
+    full = octx.getImageData(0, 0, w, h).data;
+  } catch {
+    ipStat.textContent = 'cannot read pixels (canvas tainted)';
+    return;
+  }
+
+  // Alpha bounding box, using the same >=16 cutoff the classifier uses.
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (full[(y * w + x) * 4 + 3] >= 16) {
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+      }
+    }
+  }
+  if (x1 < 0) { ipStat.textContent = 'image is fully transparent'; return; }
+  x0 = Math.max(0, x0 - 1); y0 = Math.max(0, y0 - 1);      // 1px margin
+  x1 = Math.min(w - 1, x1 + 1); y1 = Math.min(h - 1, y1 + 1);
+
+  ipW = x1 - x0 + 1; ipH = y1 - y0 + 1;
+  ipcv.width = ipW; ipcv.height = ipH;
 
   const n = ipW * ipH;
   pxH = new Float32Array(n); pxS = new Float32Array(n); pxV = new Float32Array(n);
   pxA = new Uint8Array(n);
   pxR = new Uint8Array(n); pxG = new Uint8Array(n); pxB = new Uint8Array(n);
   ipOut = ipctx.createImageData(ipW, ipH);
+  ipOpaque = 0;
 
-  for (let i = 0; i < n; i++) {
-    const j = i * 4;
-    const r = src[j], g = src[j+1], b = src[j+2], a = src[j+3];
-    pxR[i] = r; pxG[i] = g; pxB[i] = b; pxA[i] = a;
-    if (a < 16) continue;                       // fully transparent surround
-    ipOpaque++;
-    const rn = r/255, gn = g/255, bn = b/255;
-    const mx = Math.max(rn, gn, bn), mn = Math.min(rn, gn, bn), d = mx - mn;
-    let h = 0;
-    if (d > 0) {
-      if      (mx === rn) h = 60 * (((gn - bn) / d) % 6);
-      else if (mx === gn) h = 60 * ((bn - rn) / d + 2);
-      else                h = 60 * ((rn - gn) / d + 4);
-      if (h < 0) h += 360;
+  for (let y = 0; y < ipH; y++) {
+    for (let x = 0; x < ipW; x++) {
+      const i = y * ipW + x;
+      const j = ((y + y0) * w + (x + x0)) * 4;
+      const r = full[j], g = full[j+1], b = full[j+2], a = full[j+3];
+      pxR[i] = r; pxG[i] = g; pxB[i] = b; pxA[i] = a;
+      if (a < 16) continue;                     // fully transparent surround
+      ipOpaque++;
+      const rn = r/255, gn = g/255, bn = b/255;
+      const mx = Math.max(rn, gn, bn), mn = Math.min(rn, gn, bn), d = mx - mn;
+      let hh = 0;
+      if (d > 0) {
+        if      (mx === rn) hh = 60 * (((gn - bn) / d) % 6);
+        else if (mx === gn) hh = 60 * ((bn - rn) / d + 2);
+        else                hh = 60 * ((rn - gn) / d + 4);
+        if (hh < 0) hh += 360;
+      }
+      pxH[i] = hh; pxS[i] = mx === 0 ? 0 : d / mx; pxV[i] = mx;
     }
-    pxH[i] = h; pxS[i] = mx === 0 ? 0 : d / mx; pxV[i] = mx;
   }
+  ipName.textContent = label;
+  ipName.title = `${label} — source ${w}×${h}, cropped to ${ipW}×${ipH}`;
   ipReady = true;
   ipRender();
-};
+}
+
+const blobImg = new Image();
+blobImg.onload = () => ingestImage(blobImg, '3A-403-01.png');
 blobImg.onerror = () => { ipStat.textContent = 'image failed to decode'; };
 blobImg.src = BLOB_PNG;
+
+/* ---------- load a different blob at runtime ----------
+   FileReader yields a data: URL, which is same-origin everywhere including
+   file://, so getImageData keeps working. An object URL would taint the
+   canvas on file:// and break the whole panel. */
+
+function loadFile(file) {
+  if (!file) return;
+  if (!/^image\//.test(file.type) && !/\.png$/i.test(file.name)) {
+    ipStat.textContent = `${file.name} is not an image`;
+    return;
+  }
+  ipStat.textContent = `reading ${file.name}…`;
+  const fr = new FileReader();
+  fr.onload = () => {
+    const img = new Image();
+    img.onload = () => ingestImage(img, file.name);
+    img.onerror = () => { ipStat.textContent = `could not decode ${file.name}`; };
+    img.src = fr.result;
+  };
+  fr.onerror = () => { ipStat.textContent = `could not read ${file.name}`; };
+  fr.readAsDataURL(file);
+}
+
+const ipFile = document.getElementById('ip-file');
+document.getElementById('ip-load').onclick = () => ipFile.click();
+ipFile.onchange = e => { loadFile(e.target.files[0]); e.target.value = ''; };
+
+// Dropping a file anywhere else would navigate away from the page.
+['dragover', 'drop'].forEach(t => document.addEventListener(t, e => e.preventDefault()));
+
+const imgpanel = document.getElementById('imgpanel');
+['dragenter', 'dragover'].forEach(t => imgpanel.addEventListener(t, e => {
+  e.preventDefault(); imgpanel.classList.add('drop');
+}));
+imgpanel.addEventListener('dragleave', e => {
+  if (!imgpanel.contains(e.relatedTarget)) imgpanel.classList.remove('drop');
+});
+imgpanel.addEventListener('drop', e => {
+  e.preventDefault();
+  imgpanel.classList.remove('drop');
+  loadFile(e.dataTransfer.files[0]);
+});
 
 function ipRender() {
   if (!ipReady) return;
