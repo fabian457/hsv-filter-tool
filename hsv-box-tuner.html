@@ -754,7 +754,7 @@ document.getElementById('btn-copy').onclick = async e => {
    The blob is embedded as a data URI: a page opened from file:// cannot
    read pixels back out of a separately-loaded image (tainted canvas).
 
-   BLOB_PNG below is fabian-files/3A-403-01.png cropped to its alpha
+   BLOB_PNG below is example-files/3A-403-01.png cropped to its alpha
    bounding box (1528,414)-(1595,500) plus 1px, losslessly re-encoded.
    This is only the DEFAULT shown on load. To inspect any other blob, use the
    panel's "Load…" button or drag a PNG onto the panel — no rebuild needed, and
@@ -763,7 +763,7 @@ document.getElementById('btn-copy').onclick = async e => {
 
      python3 -c "
      from PIL import Image; import io, base64, pathlib, re
-     im = Image.open('fabian-files/3A-403-01.png').convert('RGBA')
+     im = Image.open('example-files/3A-403-01.png').convert('RGBA')
      b = im.split()[3].getbbox()
      c = im.crop((b[0]-1, b[1]-1, b[2]+1, b[3]+1))
      buf = io.BytesIO(); c.save(buf, format='PNG', optimize=True)
