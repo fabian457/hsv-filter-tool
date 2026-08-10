@@ -84,14 +84,17 @@
   button:hover { border-color: var(--accent); color: #fff; }
   button.primary { border-color: #3a4a5e; }
   button.on { background: #2a3a4d; border-color: var(--accent); color: #fff; }
-  textarea#export {
+  textarea#export, textarea#loadbox {
     display: block; width: 100%; box-sizing: border-box; resize: vertical;
     background: #0d0f14; border: 1px solid var(--line); border-radius: 6px;
     padding: 9px 10px; margin: 0 0 6px; font-size: 11px; line-height: 1.55;
     color: #b9c4d6; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   }
-  textarea#export:focus { outline: none; border-color: var(--accent); }
-  textarea#export.bad { border-color: var(--bad); }
+  textarea#export:focus, textarea#loadbox:focus { outline: none; border-color: var(--accent); }
+  textarea#export.bad, textarea#loadbox.bad { border-color: var(--bad); }
+  textarea#loadbox::placeholder { color: #5b6474; }
+  #load-msg { margin-top: 3px; font-size: 10.5px; min-height: 13px; line-height: 1.35; }
+  #load-msg.ok { color: var(--good); } #load-msg.err { color: var(--bad); }
   #pts-stat { margin-top: 8px; font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; }
   #pts-stat b { color: var(--good); font-weight: 600; }
   #pts-notice { margin-top: 3px; font-size: 10px; color: var(--warn); min-height: 12px; line-height: 1.35; }
@@ -158,7 +161,6 @@
     <div id="channels"></div>
     <div class="btns" style="margin-top:8px">
       <button id="btn-reset">Reset to current box</button>
-      <button id="btn-suggest" class="primary">Load H[200,216] S[.25,.79] V[.58,1]</button>
     </div>
 
     <h2>Points</h2>
@@ -175,14 +177,20 @@
       <button data-cam="sv">S–V (down H)</button>
     </div>
 
-    <h2>Constants</h2>
+    <h2>Export</h2>
     <div class="btns" style="margin-bottom:6px">
       <button id="fmt-verbose" class="primary on">Verbose</button>
       <button id="fmt-compact">Compact</button>
     </div>
     <textarea id="export" spellcheck="false" rows="3"
-      title="Edit or paste constants here to set the box"></textarea>
+      title="Mirrors the current box, in the chosen format. Copy it, or paste over it as a shortcut."></textarea>
     <div class="btns"><button id="btn-copy">Copy constants</button></div>
+
+    <h2>Load</h2>
+    <textarea id="loadbox" spellcheck="false" rows="3"
+      placeholder="Paste constants here, then click Load, e.g.&#10;H_MIN, H_MAX = 178.3, 235.0&#10;S_MIN, S_MAX = 0.250, 0.870&#10;V_MIN, V_MAX = 0.540, 1.000"></textarea>
+    <div class="btns"><button id="btn-load" class="primary">Load</button></div>
+    <div id="load-msg"></div>
   </aside>
 
   <div id="view">
@@ -217,7 +225,6 @@
    ===================================================================== */
 
 const DEFAULT_BOX = { hMin: 198, hMax: 230, sMin: 0.25, sMax: 0.67, vMin: 0.55, vMax: 1.00 };
-const SUGGESTED   = { hMin: 200, hMax: 216, sMin: 0.25, sMax: 0.79, vMin: 0.58, vMax: 1.00 };
 
 // Point-cloud limits, kept generous but bounded so the render stays smooth on a
 // public site and memory can't blow up on a large dropped image.
@@ -581,8 +588,7 @@ function syncInputs() {
 }
 
 function setBox(src) { Object.assign(box, src); syncInputs(); refresh(); }
-document.getElementById('btn-reset').onclick   = () => setBox(DEFAULT_BOX);
-document.getElementById('btn-suggest').onclick = () => setBox(SUGGESTED);
+document.getElementById('btn-reset').onclick = () => setBox(DEFAULT_BOX);
 
 const CAM_PRESETS = {
   iso: { az: -0.62, el: 0.38, dist: 2.3 }, hv: { az: 0, el: 0, dist: 2.1 },
@@ -658,6 +664,48 @@ function setFmt(f) {
 }
 document.getElementById('fmt-verbose').onclick = () => setFmt('verbose');
 document.getElementById('fmt-compact').onclick = () => setFmt('compact');
+
+/* ---------- Load box (explicit, button-only, with a diagnostic message) ---------- */
+
+// Like parseBox but reports *why* it failed, and rejects (rather than clamps)
+// out-of-range values so the Load button can name the problem.
+function diagnoseBox(text) {
+  const num = '(-?\\d+(?:\\.\\d+)?)', sep = '[^\\d.-]+';
+  const chans = [['H', 360], ['S', 1], ['V', 1]];
+  const found = {}, missing = [], ranges = [];
+  for (const [ch, hi] of chans) {
+    const m = text.match(new RegExp(ch + sep + num + sep + num, 'i'));
+    if (!m) { missing.push(ch); continue; }
+    const lo = Math.min(+m[1], +m[2]), hh = Math.max(+m[1], +m[2]);
+    if (hh > hi)     ranges.push(`${ch} max out of range (0–${hi})`);
+    else if (lo < 0) ranges.push(`${ch} min out of range (0–${hi})`);
+    else             found[ch] = [lo, hh];
+  }
+  if (!missing.length && !ranges.length) {
+    return { ok: true, box: {
+      hMin: found.H[0], hMax: found.H[1], sMin: found.S[0], sMax: found.S[1],
+      vMin: found.V[0], vMax: found.V[1] } };
+  }
+  let message;
+  if (missing.length === 3) message = 'couldn’t parse constants — expected H, S and V';
+  else if (ranges.length)  message = ranges.join('; ');
+  else message = `found ${Object.keys(found).join(', ')}; missing ${missing.join(', ')}`;
+  return { ok: false, message };
+}
+
+const loadEl  = document.getElementById('loadbox');
+const loadMsg = document.getElementById('load-msg');
+function setLoadMsg(kind, text) { loadMsg.textContent = text; loadMsg.className = kind; }
+
+document.getElementById('btn-load').onclick = () => {
+  if (!loadEl.value.trim()) { loadEl.classList.add('bad'); setLoadMsg('err', 'nothing to load — paste constants first'); return; }
+  const r = diagnoseBox(loadEl.value);
+  if (r.ok) { loadEl.classList.remove('bad'); setLoadMsg('ok', 'Loaded ✓'); setBox(r.box); }
+  else      { loadEl.classList.add('bad');    setLoadMsg('err', r.message); }
+};
+
+// Editing only clears stale feedback — it never applies (button-only).
+loadEl.addEventListener('input', () => { loadEl.classList.remove('bad'); setLoadMsg('', ''); });
 
 function updatePointsReadout() {
   const n = POINTS.length;
